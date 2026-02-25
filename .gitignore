@@ -1,0 +1,71 @@
+############################################
+# OS / Éditeurs
+############################################
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+############################################
+# Visual Studio / MAUI
+############################################
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+############################################
+# .NET / MSBuild
+############################################
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.log
+
+############################################
+# NuGet
+############################################
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+############################################
+# Android (MAUI)
+############################################
+**/android/.gradle/
+**/android/.idea/
+**/android/.settings/
+**/android/*.iml
+**/android/**/build/
+**/android/**/obj/
+
+# Android keystores (CRITIQUE)
+*.keystore
+*.jks
+
+############################################
+# iOS / macOS (MAUI)
+############################################
+**/ios/Pods/
+**/ios/*.xcworkspace
+**/ios/*.xcuserstate
+**/ios/*.xcuserdata
+**/ios/build/
+**/ios/DerivedData/
+
+############################################
+# macOS (si build iOS distant)
+############################################
+*.dmg
+
+############################################
+# Logs & temporaires
+############################################
+*.tmp
+*.bak
+*.old

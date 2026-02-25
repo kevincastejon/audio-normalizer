@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="AudioNormalizer.MainPage"
+             Title="Audio Normalizer">
+
+    <Grid RowDefinitions="Auto, Auto, Auto,*,Auto" Padding="16" RowSpacing="12">
+        <Button Grid.Row="0"
+                Text="Pick folder"
+                Clicked="OnPickFolderClicked"
+                IsEnabled="{Binding IsNotNormalizing}"
+                />
+        <HorizontalStackLayout Grid.Row="1" Spacing="12" IsVisible="{Binding HasItems}">
+            <Button Text="Select all" Clicked="OnSelectAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
+            <Button Text="Clear all" Clicked="OnClearAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
+        </HorizontalStackLayout>
+        <HorizontalStackLayout Grid.Row="2" Spacing="12" IsVisible="{Binding IsNormalizing}">
+            <Button Text="Cancel" Clicked="OnCancelClicked" IsVisible="{Binding IsNormalizing}" />
+            <Label Text="Normalizing..." VerticalOptions="Center" IsVisible="{Binding IsNormalizing}" />
+        </HorizontalStackLayout>
+
+        <Grid Grid.Row="3">
+            <CollectionView ItemsSource="{Binding AudioFiles}" IsVisible="{Binding HasItems}">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid ColumnDefinitions="Auto,*" Padding="6" ColumnSpacing="10">
+                            <CheckBox Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding DisplayText}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <Label Text="{Binding NoFilesMessage}"
+                   IsVisible="{Binding ShowNoFilesMessage}"
+                   HorizontalTextAlignment="Center"
+                   VerticalTextAlignment="Center" />
+        </Grid>
+
+        <Button Grid.Row="4"
+                Text="Normalize"
+                IsEnabled="{Binding IsNotNormalizing}"
+                IsVisible="{Binding HasItems}"
+                Clicked="OnNormalizeClicked" />
+    </Grid>
+
+</ContentPage>
