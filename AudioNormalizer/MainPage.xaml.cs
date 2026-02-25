@@ -113,10 +113,8 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             return;
         }
 
-        var selectedFiles = AudioFiles
-            .Where(f => f.IsChecked)
-            .Select(f => f.FullPath)
-            .ToList();
+        var selectedItems = AudioFiles.Where(f => f.IsChecked).ToList();
+        var selectedFiles = selectedItems.Select(f => f.FullPath).ToList();
 
         if (selectedFiles.Count == 0)
         {
@@ -139,16 +137,24 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 return;
         }
 
+        foreach (var item in selectedItems)
+            item.Status = AudioStatus.None;
+
         _normalizeCts = new CancellationTokenSource();
         IsNormalizing = true;
 
         var tempRoot = GetNormalizeTempRoot();
         List<(string, string)> errors = new();
+
         try
         {
-            foreach (var file in selectedFiles)
+            foreach (var item in selectedItems)
             {
+                var file = item.FullPath;
+
                 _normalizeCts.Token.ThrowIfCancellationRequested();
+
+                item.Status = AudioStatus.Processing;
 
                 var dir = Path.GetDirectoryName(file)!;
                 var name = Path.GetFileNameWithoutExtension(file);
@@ -193,6 +199,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                     }
 
                     TryDeleteFile(tempFile);
+                    item.Status = AudioStatus.None;
                     throw;
                 }
 
@@ -204,30 +211,30 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
                     TryDeleteFile(tempFile);
                     errors.Add((file, error));
+                    item.Status = AudioStatus.Failed;
                     continue;
                 }
 
-                if (overwrite)
+                try
                 {
-                    File.Delete(file);
-                    File.Move(tempFile, file);
+                    if (File.Exists(outputPath))
+                        File.Delete(outputPath);
                 }
-                else
+                catch
                 {
-                    try
-                    {
-                        if (File.Exists(outputPath))
-                            File.Delete(outputPath);
-                    }
-                    catch
-                    {
-                    }
+                }
 
-                    File.Move(tempFile, outputPath);
-                }
+                if (overwrite)
+                    TryDeleteFile(file);
+
+                File.Move(tempFile, outputPath);
+                item.Status = AudioStatus.Succeeded;
             }
 
-            await DisplayAlertAsync("Normalize", $"{selectedFiles.Count - errors.Count} audio file(s) normalized.{(errors.Count == 0 ? "" : $"\nNormalization failed for {errors.Count} file(s).")}", "OK");
+            await DisplayAlertAsync(
+                "Normalize",
+                $"{selectedFiles.Count - errors.Count} audio file(s) normalized.{(errors.Count == 0 ? "" : $"\nNormalization failed for {errors.Count} file(s).")}",
+                "OK");
         }
         catch (OperationCanceledException)
         {
@@ -376,6 +383,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         CleanNormalizeTempFiles();
     }
 
+    public enum AudioStatus
+    {
+        None = 0,
+        Processing = 1,
+        Succeeded = 2,
+        Failed = 3
+    }
+
     public sealed class AudioItem : INotifyPropertyChanged
     {
         readonly string fullPath;
@@ -391,6 +406,27 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 OnPropertyChanged();
             }
         }
+
+        AudioStatus status = AudioStatus.None;
+        public AudioStatus Status
+        {
+            get => status;
+            set
+            {
+                if (status == value) return;
+                status = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ShowStatus));
+                OnPropertyChanged(nameof(IsProcessing));
+                OnPropertyChanged(nameof(IsSucceeded));
+                OnPropertyChanged(nameof(IsFailed));
+            }
+        }
+
+        public bool ShowStatus => Status != AudioStatus.None;
+        public bool IsProcessing => Status == AudioStatus.Processing;
+        public bool IsSucceeded => Status == AudioStatus.Succeeded;
+        public bool IsFailed => Status == AudioStatus.Failed;
 
         public string DisplayText { get; }
 

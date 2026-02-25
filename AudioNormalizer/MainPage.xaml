@@ -9,6 +9,7 @@
                 Text="Pick folder"
                 Clicked="OnPickFolderClicked"
                 IsEnabled="{Binding IsNotNormalizing}" />
+
         <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="12">
             <Label Grid.Column="0"
                    Text="Output file name postfix"
@@ -34,9 +35,31 @@
             <CollectionView ItemsSource="{Binding AudioFiles}" IsVisible="{Binding HasItems}">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
-                        <Grid ColumnDefinitions="Auto,*" Padding="6" ColumnSpacing="10">
+                        <Grid ColumnDefinitions="Auto,Auto,*" Padding="6" ColumnSpacing="10">
                             <CheckBox Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
-                            <Label Grid.Column="1" Text="{Binding DisplayText}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
+
+                            <Grid Grid.Column="1" WidthRequest="24" HeightRequest="24" VerticalOptions="Center" HorizontalOptions="Center">
+                                <ActivityIndicator IsRunning="{Binding IsProcessing}"
+                                                   IsVisible="{Binding IsProcessing}"
+                                                   VerticalOptions="Center"
+                                                   HorizontalOptions="Center" />
+
+                                <Label Text="✔"
+                                       TextColor="Green"
+                                       FontSize="16"
+                                       IsVisible="{Binding IsSucceeded}"
+                                       VerticalOptions="Center"
+                                       HorizontalOptions="Center" />
+
+                                <Label Text="✖"
+                                       TextColor="Red"
+                                       FontSize="16"
+                                       IsVisible="{Binding IsFailed}"
+                                       VerticalOptions="Center"
+                                       HorizontalOptions="Center" />
+                            </Grid>
+
+                            <Label Grid.Column="2" Text="{Binding DisplayText}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
                         </Grid>
                     </DataTemplate>
                 </CollectionView.ItemTemplate>
