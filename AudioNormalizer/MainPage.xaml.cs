@@ -1,4 +1,3 @@
-using Microsoft.Maui.Controls.Shapes;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -25,6 +24,18 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     }
 
     public bool IsNotNormalizing => !IsNormalizing;
+
+    private string _outputPostfix = "_Normalized";
+    public string OutputPostfix
+    {
+        get => _outputPostfix;
+        set
+        {
+            if (_outputPostfix == value) return;
+            _outputPostfix = value ?? string.Empty;
+            OnPropertyChanged();
+        }
+    }
 
     public ObservableCollection<AudioItem> AudioFiles { get; } = new();
 
@@ -53,6 +64,9 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         InitializeComponent();
         BindingContext = this;
+
+        CleanupNormalizeTempOnStartup();
+
         AudioFiles.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasItems));
@@ -91,7 +105,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         if (IsNormalizing) return;
 
-        var ffmpegPath = System.IO.Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
+        var ffmpegPath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
 
         if (!File.Exists(ffmpegPath))
         {
@@ -110,21 +124,41 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             return;
         }
 
+        var postfix = (OutputPostfix ?? string.Empty).Trim();
+        var overwrite = string.IsNullOrWhiteSpace(postfix);
+
+        if (overwrite)
+        {
+            var proceed = await DisplayAlertAsync(
+                "Overwrite files?",
+                $"Postfix is empty. This will overwrite {selectedFiles.Count} file(s). Continue?",
+                "Overwrite",
+                "Cancel");
+
+            if (!proceed)
+                return;
+        }
+
         _normalizeCts = new CancellationTokenSource();
         IsNormalizing = true;
-        CleanNormalizeTempFiles();
+
+        var tempRoot = GetNormalizeTempRoot();
+        List<(string, string)> errors = new();
         try
         {
             foreach (var file in selectedFiles)
             {
                 _normalizeCts.Token.ThrowIfCancellationRequested();
 
-                var dir = System.IO.Path.GetDirectoryName(file)!;
-                var name = System.IO.Path.GetFileNameWithoutExtension(file);
-                var ext = System.IO.Path.GetExtension(file);
-                var tempRoot = System.IO.Path.Combine(FileSystem.CacheDirectory, "NormalizedTempFiles");
-                Directory.CreateDirectory(tempRoot);
-                var tempFile = System.IO.Path.Combine(tempRoot, $"{Guid.NewGuid()}{ext}");
+                var dir = Path.GetDirectoryName(file)!;
+                var name = Path.GetFileNameWithoutExtension(file);
+                var ext = Path.GetExtension(file);
+
+                var outputPath = overwrite
+                    ? file
+                    : Path.Combine(dir, $"{name}{postfix}{ext}");
+
+                var tempFile = Path.Combine(tempRoot, $"{Guid.NewGuid()}{ext}");
 
                 var arguments = $"-y -i \"{file}\" -af loudnorm=I=-16:TP=-1.5:LRA=11 \"{tempFile}\"";
 
@@ -158,6 +192,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                     {
                     }
 
+                    TryDeleteFile(tempFile);
                     throw;
                 }
 
@@ -167,15 +202,32 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                     if (string.IsNullOrWhiteSpace(error))
                         error = $"Exit code: {process.ExitCode}";
 
-                    await DisplayAlertAsync("FFmpeg error", error, "OK");
-                    return;
+                    TryDeleteFile(tempFile);
+                    errors.Add((file, error));
+                    continue;
                 }
 
-                File.Delete(file);
-                File.Move(tempFile, file);
+                if (overwrite)
+                {
+                    File.Delete(file);
+                    File.Move(tempFile, file);
+                }
+                else
+                {
+                    try
+                    {
+                        if (File.Exists(outputPath))
+                            File.Delete(outputPath);
+                    }
+                    catch
+                    {
+                    }
+
+                    File.Move(tempFile, outputPath);
+                }
             }
 
-            await DisplayAlertAsync("Normalize", "All selected files normalized.", "OK");
+            await DisplayAlertAsync("Normalize", $"{selectedFiles.Count - errors.Count} audio file(s) normalized.{(errors.Count == 0 ? "" : $"\nNormalization failed for {errors.Count} file(s).")}", "OK");
         }
         catch (OperationCanceledException)
         {
@@ -187,6 +239,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             _normalizeCts?.Dispose();
             _normalizeCts = null;
             IsNormalizing = false;
+            CleanNormalizeTempFiles();
         }
     }
 
@@ -219,7 +272,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
             foreach (var file in files)
             {
-                var ext = System.IO.Path.GetExtension(file);
+                var ext = Path.GetExtension(file);
                 if (ext.Equals(".wav", StringComparison.OrdinalIgnoreCase) ||
                     ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase))
                 {
@@ -270,6 +323,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         return null;
 #endif
     }
+
     void OnCancelClicked(object sender, EventArgs e)
     {
         _normalizeCts?.Cancel();
@@ -282,30 +336,44 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         catch
         {
         }
-        CleanNormalizeTempFiles();
     }
+
     static string GetNormalizeTempRoot()
     {
-        var tempRoot = System.IO.Path.Combine(FileSystem.CacheDirectory, "NormalizedTempFiles");
+        var tempRoot = Path.Combine(FileSystem.CacheDirectory, "NormalizedTempFiles");
         Directory.CreateDirectory(tempRoot);
         return tempRoot;
     }
+
+    static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
     static void CleanNormalizeTempFiles()
     {
         var tempRoot = GetNormalizeTempRoot();
-        foreach (var file in Directory.EnumerateFiles(tempRoot))
+
+        try
         {
-            if (File.Exists(file))
-            {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch
-                {
-                }
-            }
+            foreach (var file in Directory.EnumerateFiles(tempRoot))
+                TryDeleteFile(file);
         }
+        catch
+        {
+        }
+    }
+
+    void CleanupNormalizeTempOnStartup()
+    {
+        CleanNormalizeTempFiles();
     }
 
     public sealed class AudioItem : INotifyPropertyChanged
@@ -331,7 +399,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         public AudioItem(string path)
         {
             fullPath = path;
-            var name = System.IO.Path.GetFileName(path);
+            var name = Path.GetFileName(path);
             DisplayText = $"{name} ({fullPath})";
         }
 

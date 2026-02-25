@@ -4,22 +4,33 @@
              x:Class="AudioNormalizer.MainPage"
              Title="Audio Normalizer">
 
-    <Grid RowDefinitions="Auto, Auto, Auto,*,Auto" Padding="16" RowSpacing="12">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
         <Button Grid.Row="0"
                 Text="Pick folder"
                 Clicked="OnPickFolderClicked"
-                IsEnabled="{Binding IsNotNormalizing}"
-                />
-        <HorizontalStackLayout Grid.Row="1" Spacing="12" IsVisible="{Binding HasItems}">
+                IsEnabled="{Binding IsNotNormalizing}" />
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <Label Grid.Column="0"
+                   Text="Output file name postfix"
+                   VerticalOptions="Center" />
+            <Entry Grid.Column="1"
+                   Placeholder="(leaving this empty will overwrite input files)"
+                   Text="{Binding OutputPostfix}"
+                   IsEnabled="{Binding IsNotNormalizing}"
+                   VerticalOptions="Center" />
+        </Grid>
+
+        <HorizontalStackLayout Grid.Row="2" Spacing="12" IsVisible="{Binding HasItems}">
             <Button Text="Select all" Clicked="OnSelectAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
             <Button Text="Clear all" Clicked="OnClearAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
         </HorizontalStackLayout>
-        <HorizontalStackLayout Grid.Row="2" Spacing="12" IsVisible="{Binding IsNormalizing}">
-            <Button Text="Cancel" Clicked="OnCancelClicked" IsVisible="{Binding IsNormalizing}" />
-            <Label Text="Normalizing..." VerticalOptions="Center" IsVisible="{Binding IsNormalizing}" />
+
+        <HorizontalStackLayout Grid.Row="3" Spacing="12" IsVisible="{Binding IsNormalizing}">
+            <Button Text="Cancel" Clicked="OnCancelClicked" />
+            <Label Text="Normalizing..." VerticalOptions="Center" />
         </HorizontalStackLayout>
 
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
             <CollectionView ItemsSource="{Binding AudioFiles}" IsVisible="{Binding HasItems}">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
@@ -37,7 +48,7 @@
                    VerticalTextAlignment="Center" />
         </Grid>
 
-        <Button Grid.Row="4"
+        <Button Grid.Row="5"
                 Text="Normalize"
                 IsEnabled="{Binding IsNotNormalizing}"
                 IsVisible="{Binding HasItems}"
