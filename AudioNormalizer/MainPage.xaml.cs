@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace AudioNormalizer;
 
@@ -29,7 +31,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         get
         {
-            return $"{AudioFiles.Count(x=>x.IsChecked)} file(s) selected";
+            return $"{AudioFiles.Count(x => x.IsChecked)} file(s) selected";
         }
     }
 
@@ -132,10 +134,17 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (IsNormalizing) return;
 
         var ffmpegPath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
+        var ffprobePath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffprobe.exe");
 
         if (!File.Exists(ffmpegPath))
         {
             await DisplayAlertAsync("FFmpeg", "ffmpeg.exe not found.", "OK");
+            return;
+        }
+
+        if (!File.Exists(ffprobePath))
+        {
+            await DisplayAlertAsync("FFmpeg", "ffprobe.exe not found.", "OK");
             return;
         }
 
@@ -192,7 +201,11 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
                 var tempFile = Path.Combine(tempRoot, $"{Guid.NewGuid()}{ext}");
 
-                var arguments = $"-y -i \"{file}\" -af loudnorm=I=-16:TP=-1.5:LRA=11 \"{tempFile}\"";
+                // Preserve encoding parameters as much as possible using ffprobe.
+                var encodingArgs = await BuildEncodingArgsFromFfprobeAsync(ffprobePath, file, ext, _normalizeCts.Token);
+
+                var arguments =
+                    $"-y -i \"{file}\" -map 0:a:0 -vn -map_metadata 0 -af loudnorm=I=-16:TP=-1.5:LRA=11 {encodingArgs} \"{tempFile}\"";
 
                 var psi = new ProcessStartInfo
                 {
@@ -408,6 +421,193 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         CleanNormalizeTempFiles();
     }
+
+    // ----------- ffprobe helpers (minimal changes, only what's needed) -----------
+
+    sealed class FfprobeRoot
+    {
+        public FfprobeStream[]? streams { get; set; }
+        public FfprobeFormat? format { get; set; }
+    }
+
+    sealed class FfprobeStream
+    {
+        public string? codec_type { get; set; }
+        public string? codec_name { get; set; }
+        public string? sample_fmt { get; set; }
+        public string? sample_rate { get; set; }
+        public int? channels { get; set; }
+        public string? channel_layout { get; set; }
+        public string? bit_rate { get; set; }
+        public string? profile { get; set; }
+    }
+
+    sealed class FfprobeFormat
+    {
+        public string? bit_rate { get; set; }
+        public string? format_name { get; set; }
+    }
+
+    static long? ParseLongInvariant(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v))
+            return v;
+        return null;
+    }
+
+    static string BitrateToFfmpegArg(long bitsPerSecond)
+    {
+        // Use k for readability (ffmpeg accepts both raw bps and k suffix)
+        var kbps = (long)Math.Round(bitsPerSecond / 1000.0);
+        if (kbps <= 0) kbps = 1;
+        return $"{kbps}k";
+    }
+
+    static string? MapWavSampleFmtToPcmCodec(string? sampleFmt)
+    {
+        // ffprobe sample_fmt examples: s16, s32, s64, flt, dbl, s16p, fltp...
+        // For WAV, we map to closest PCM LE codec.
+        if (string.IsNullOrWhiteSpace(sampleFmt))
+            return null;
+
+        var sf = sampleFmt.Trim().ToLowerInvariant();
+        if (sf.StartsWith("s16")) return "pcm_s16le";
+        if (sf.StartsWith("s24")) return "pcm_s24le";
+        if (sf.StartsWith("s32")) return "pcm_s32le";
+        if (sf.StartsWith("s64")) return "pcm_s64le";
+        if (sf.StartsWith("flt")) return "pcm_f32le";
+        if (sf.StartsWith("dbl")) return "pcm_f64le";
+
+        return null;
+    }
+
+    async Task<string> BuildEncodingArgsFromFfprobeAsync(string ffprobePath, string inputFile, string ext, CancellationToken token)
+    {
+        // We only need key audio properties. Keep it simple and robust.
+        var args =
+            $"-v error -select_streams a:0 -show_entries stream=codec_type,codec_name,bit_rate,sample_rate,channels,channel_layout,sample_fmt,profile -show_entries format=bit_rate,format_name -of json \"{inputFile}\"";
+
+        var (exitCode, stdout, stderr) = await RunProcessCaptureAsync(ffprobePath, args, token);
+
+        if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+            return string.Empty;
+
+        FfprobeRoot? root;
+        try
+        {
+            root = JsonSerializer.Deserialize<FfprobeRoot>(stdout);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+
+        var stream = root?.streams?.FirstOrDefault(s => string.Equals(s.codec_type, "audio", StringComparison.OrdinalIgnoreCase));
+        if (stream is null)
+            return string.Empty;
+
+        // Prefer stream bit_rate; fallback to format bit_rate.
+        var br = ParseLongInvariant(stream.bit_rate) ?? ParseLongInvariant(root?.format?.bit_rate);
+        var sr = ParseLongInvariant(stream.sample_rate);
+        var ch = stream.channels;
+
+        var extension = (ext ?? string.Empty).Trim().ToLowerInvariant();
+
+        // IMPORTANT: loudnorm forces re-encode (audio filter). We try to preserve codec/bitrate/etc.
+        // Keep changes minimal: only add params if we have reliable values.
+        var parts = new List<string>();
+
+        if (extension == ".mp3")
+        {
+            // Re-encode to MP3, try to keep same bitrate if known.
+            parts.Add("-c:a libmp3lame");
+            if (br.HasValue && br.Value > 0)
+                parts.Add($"-b:a {BitrateToFfmpegArg(br.Value)}");
+
+            if (sr.HasValue && sr.Value > 0)
+                parts.Add($"-ar {sr.Value.ToString(CultureInfo.InvariantCulture)}");
+
+            if (ch.HasValue && ch.Value > 0)
+                parts.Add($"-ac {ch.Value.ToString(CultureInfo.InvariantCulture)}");
+
+            // Keep metadata and common MP3 tags behavior stable.
+            parts.Add("-id3v2_version 3");
+        }
+        else if (extension == ".wav")
+        {
+            // Re-encode to PCM for WAV, try to match sample format/sample rate/channels.
+            var pcmCodec = MapWavSampleFmtToPcmCodec(stream.sample_fmt) ?? "pcm_s16le";
+            parts.Add($"-c:a {pcmCodec}");
+
+            if (sr.HasValue && sr.Value > 0)
+                parts.Add($"-ar {sr.Value.ToString(CultureInfo.InvariantCulture)}");
+
+            if (ch.HasValue && ch.Value > 0)
+                parts.Add($"-ac {ch.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+        else
+        {
+            // Not expected (you only enumerate mp3/wav), but keep safe behavior.
+            if (sr.HasValue && sr.Value > 0)
+                parts.Add($"-ar {sr.Value.ToString(CultureInfo.InvariantCulture)}");
+
+            if (ch.HasValue && ch.Value > 0)
+                parts.Add($"-ac {ch.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        return string.Join(' ', parts);
+    }
+
+    async Task<(int exitCode, string stdout, string stderr)> RunProcessCaptureAsync(string exePath, string arguments, CancellationToken token)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exePath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        _currentProcess = process;
+
+        process.Start();
+
+        try
+        {
+            await process.WaitForExitAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(true);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+        finally
+        {
+            _currentProcess = null;
+        }
+
+        // Read after exit (simple, avoids extra plumbing; stdout is small JSON here).
+        var stdout = string.Empty;
+        var stderr = string.Empty;
+        try { stdout = await process.StandardOutput.ReadToEndAsync(); } catch { }
+        try { stderr = await process.StandardError.ReadToEndAsync(); } catch { }
+
+        return (process.ExitCode, stdout, stderr);
+    }
+
+    // --------------------------------------------------------------------------
 
     public enum AudioStatus
     {
