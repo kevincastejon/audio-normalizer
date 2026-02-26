@@ -76,4 +76,10 @@
 	    <TargetPath>ffmpeg\ffmpeg.exe</TargetPath>
 	  </None>
 	</ItemGroup>
+	<ItemGroup>
+	  <None Update="Platforms\Windows\ffmpeg\ffprobe.exe">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	    <TargetPath>ffmpeg\ffprobe.exe</TargetPath>
+	  </None>
+	</ItemGroup>
 </Project>
