@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AudioNormalizer;
 
@@ -204,8 +205,22 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 // Preserve encoding parameters as much as possible using ffprobe.
                 var encodingArgs = await BuildEncodingArgsFromFfprobeAsync(ffprobePath, file, ext, _normalizeCts.Token);
 
+                // 2-pass loudnorm:
+                // Pass 1: analyze to get measured values (JSON in stderr)
+                var meas = await GetLoudnormMeasurementsAsync(ffmpegPath, file, _normalizeCts.Token);
+
+                // Pass 2: apply normalization using measured values
+                var filter =
+                    $"loudnorm=I=-16:TP=-1.5:LRA=11" +
+                    $":measured_I={meas.InputI.ToString(CultureInfo.InvariantCulture)}" +
+                    $":measured_TP={meas.InputTP.ToString(CultureInfo.InvariantCulture)}" +
+                    $":measured_LRA={meas.InputLRA.ToString(CultureInfo.InvariantCulture)}" +
+                    $":measured_thresh={meas.InputThresh.ToString(CultureInfo.InvariantCulture)}" +
+                    $":offset={meas.TargetOffset.ToString(CultureInfo.InvariantCulture)}" +
+                    $":linear=true:print_format=summary";
+
                 var arguments =
-                    $"-y -i \"{file}\" -map 0:a:0 -vn -map_metadata 0 -af loudnorm=I=-16:TP=-1.5:LRA=11 {encodingArgs} \"{tempFile}\"";
+                    $"-y -i \"{file}\" -map 0:a:0 -vn -map_metadata 0 -af \"{filter}\" {encodingArgs} \"{tempFile}\"";
 
                 var psi = new ProcessStartInfo
                 {
@@ -458,7 +473,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     static string BitrateToFfmpegArg(long bitsPerSecond)
     {
-        // Use k for readability (ffmpeg accepts both raw bps and k suffix)
         var kbps = (long)Math.Round(bitsPerSecond / 1000.0);
         if (kbps <= 0) kbps = 1;
         return $"{kbps}k";
@@ -466,8 +480,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     static string? MapWavSampleFmtToPcmCodec(string? sampleFmt)
     {
-        // ffprobe sample_fmt examples: s16, s32, s64, flt, dbl, s16p, fltp...
-        // For WAV, we map to closest PCM LE codec.
         if (string.IsNullOrWhiteSpace(sampleFmt))
             return null;
 
@@ -484,7 +496,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     async Task<string> BuildEncodingArgsFromFfprobeAsync(string ffprobePath, string inputFile, string ext, CancellationToken token)
     {
-        // We only need key audio properties. Keep it simple and robust.
         var args =
             $"-v error -select_streams a:0 -show_entries stream=codec_type,codec_name,bit_rate,sample_rate,channels,channel_layout,sample_fmt,profile -show_entries format=bit_rate,format_name -of json \"{inputFile}\"";
 
@@ -507,20 +518,16 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (stream is null)
             return string.Empty;
 
-        // Prefer stream bit_rate; fallback to format bit_rate.
         var br = ParseLongInvariant(stream.bit_rate) ?? ParseLongInvariant(root?.format?.bit_rate);
         var sr = ParseLongInvariant(stream.sample_rate);
         var ch = stream.channels;
 
         var extension = (ext ?? string.Empty).Trim().ToLowerInvariant();
 
-        // IMPORTANT: loudnorm forces re-encode (audio filter). We try to preserve codec/bitrate/etc.
-        // Keep changes minimal: only add params if we have reliable values.
         var parts = new List<string>();
 
         if (extension == ".mp3")
         {
-            // Re-encode to MP3, try to keep same bitrate if known.
             parts.Add("-c:a libmp3lame");
             if (br.HasValue && br.Value > 0)
                 parts.Add($"-b:a {BitrateToFfmpegArg(br.Value)}");
@@ -531,12 +538,10 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             if (ch.HasValue && ch.Value > 0)
                 parts.Add($"-ac {ch.Value.ToString(CultureInfo.InvariantCulture)}");
 
-            // Keep metadata and common MP3 tags behavior stable.
             parts.Add("-id3v2_version 3");
         }
         else if (extension == ".wav")
         {
-            // Re-encode to PCM for WAV, try to match sample format/sample rate/channels.
             var pcmCodec = MapWavSampleFmtToPcmCodec(stream.sample_fmt) ?? "pcm_s16le";
             parts.Add($"-c:a {pcmCodec}");
 
@@ -548,7 +553,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         }
         else
         {
-            // Not expected (you only enumerate mp3/wav), but keep safe behavior.
             if (sr.HasValue && sr.Value > 0)
                 parts.Add($"-ar {sr.Value.ToString(CultureInfo.InvariantCulture)}");
 
@@ -559,6 +563,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         return string.Join(' ', parts);
     }
 
+    // NOTE: This does NOT set _currentProcess, to avoid interfering with Cancel() killing ffmpeg.
     async Task<(int exitCode, string stdout, string stderr)> RunProcessCaptureAsync(string exePath, string arguments, CancellationToken token)
     {
         var psi = new ProcessStartInfo
@@ -572,7 +577,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         };
 
         using var process = new Process { StartInfo = psi };
-        _currentProcess = process;
 
         process.Start();
 
@@ -593,12 +597,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
             throw;
         }
-        finally
-        {
-            _currentProcess = null;
-        }
 
-        // Read after exit (simple, avoids extra plumbing; stdout is small JSON here).
         var stdout = string.Empty;
         var stderr = string.Empty;
         try { stdout = await process.StandardOutput.ReadToEndAsync(); } catch { }
@@ -607,7 +606,82 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         return (process.ExitCode, stdout, stderr);
     }
 
-    // --------------------------------------------------------------------------
+    // ----------- loudnorm 2-pass helpers -----------
+
+    sealed class LoudnormMeasurements
+    {
+        public double InputI { get; init; }
+        public double InputTP { get; init; }
+        public double InputLRA { get; init; }
+        public double InputThresh { get; init; }
+        public double TargetOffset { get; init; }
+    }
+
+    static readonly Regex LoudnormJsonRegex =
+        new(@"\{[\s\S]*?""input_i""[\s\S]*?\}", RegexOptions.Compiled);
+
+    async Task<LoudnormMeasurements> GetLoudnormMeasurementsAsync(string ffmpegPath, string inputFile, CancellationToken token)
+    {
+        var nullSink = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+        var args =
+            $"-hide_banner -nostats -i \"{inputFile}\" " +
+            "-af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json " +
+            $"-f null {nullSink}";
+
+        var (exitCode, _, stderr) = await RunProcessCaptureAsync(ffmpegPath, args, token);
+
+        if (exitCode != 0)
+        {
+            var msg = (stderr ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(msg)) msg = $"Exit code: {exitCode}";
+            throw new Exception($"ffmpeg loudnorm analysis failed: {msg}");
+        }
+
+        var json = ExtractLoudnormJson(stderr);
+        return ParseLoudnormMeasurements(json);
+    }
+
+    static string ExtractLoudnormJson(string? ffmpegStderr)
+    {
+        if (string.IsNullOrWhiteSpace(ffmpegStderr))
+            throw new Exception("ffmpeg analysis produced no stderr output.");
+
+        var m = LoudnormJsonRegex.Match(ffmpegStderr);
+        if (!m.Success)
+            throw new Exception("Could not find loudnorm JSON in ffmpeg output.");
+
+        return m.Value;
+    }
+
+    static LoudnormMeasurements ParseLoudnormMeasurements(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        static double GetDouble(JsonElement r, string name)
+        {
+            if (!r.TryGetProperty(name, out var p))
+                throw new Exception($"Missing '{name}' in loudnorm JSON.");
+
+            var s = p.GetString();
+            if (string.IsNullOrWhiteSpace(s) ||
+                !double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+                throw new Exception($"Invalid '{name}' value in loudnorm JSON: {s}");
+
+            return v;
+        }
+
+        return new LoudnormMeasurements
+        {
+            InputI = GetDouble(root, "input_i"),
+            InputTP = GetDouble(root, "input_tp"),
+            InputLRA = GetDouble(root, "input_lra"),
+            InputThresh = GetDouble(root, "input_thresh"),
+            TargetOffset = GetDouble(root, "target_offset"),
+        };
+    }
+
+    // ---------------------------------------------
 
     public enum AudioStatus
     {
