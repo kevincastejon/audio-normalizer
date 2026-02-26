@@ -2,15 +2,16 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="AudioNormalizer.MainPage"
+             x:Name="HomePage"
              Title="Audio Normalizer">
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
         <Button Grid.Row="0"
                 Text="Pick folder"
                 Clicked="OnPickFolderClicked"
                 IsEnabled="{Binding IsNotNormalizing}" />
 
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="12">
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto" ColumnSpacing="12">
             <Label Grid.Column="0"
                    Text="Output file name postfix"
                    VerticalOptions="Center" />
@@ -18,7 +19,8 @@
                    Placeholder="(leaving this empty will overwrite input files)"
                    Text="{Binding OutputPostfix}"
                    IsEnabled="{Binding IsNotNormalizing}"
-                   VerticalOptions="Center" />
+                   VerticalOptions="Center"
+                   MinimumWidthRequest="50"/>
         </Grid>
 
         <HorizontalStackLayout Grid.Row="2" Spacing="12" IsVisible="{Binding HasItems}">
@@ -30,36 +32,40 @@
             <Button Text="Cancel" Clicked="OnCancelClicked" />
             <Label Text="Normalizing..." VerticalOptions="Center" />
         </HorizontalStackLayout>
-
-        <Grid Grid.Row="4">
+        <Label Grid.Row="4" Text="{Binding SelectedFilesText}" VerticalOptions="Center" IsVisible="{Binding ShowSelectedCount}"/>
+        <Grid Grid.Row="5">
             <CollectionView ItemsSource="{Binding AudioFiles}" IsVisible="{Binding HasItems}">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Grid ColumnDefinitions="Auto,Auto,*" Padding="6" ColumnSpacing="10">
-                            <CheckBox Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
+                            <CheckBox IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}" Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
 
                             <Grid Grid.Column="1" WidthRequest="24" HeightRequest="24" VerticalOptions="Center" HorizontalOptions="Center">
                                 <ActivityIndicator IsRunning="{Binding IsProcessing}"
-                                                   IsVisible="{Binding IsProcessing}"
-                                                   VerticalOptions="Center"
-                                                   HorizontalOptions="Center" />
+                       IsVisible="{Binding IsProcessing}"
+                       VerticalOptions="Center"
+                       HorizontalOptions="Center" />
 
-                                <Label Text="✔"
-                                       TextColor="Green"
-                                       FontSize="16"
-                                       IsVisible="{Binding IsSucceeded}"
-                                       VerticalOptions="Center"
-                                       HorizontalOptions="Center" />
+                                <Path IsVisible="{Binding IsSucceeded}"
+          Data="M2,12 L9,19 L22,4"
+          Stroke="Green"
+          StrokeThickness="2.5"
+          StrokeLineCap="Round"
+          StrokeLineJoin="Round"
+          HorizontalOptions="Center"
+          VerticalOptions="Center" />
 
-                                <Label Text="✖"
-                                       TextColor="Red"
-                                       FontSize="16"
-                                       IsVisible="{Binding IsFailed}"
-                                       VerticalOptions="Center"
-                                       HorizontalOptions="Center" />
+                                <Path IsVisible="{Binding IsFailed}"
+          Data="M5,5 L19,19 M19,5 L5,19"
+          Stroke="Red"
+          StrokeThickness="2.5"
+          StrokeLineCap="Round"
+          StrokeLineJoin="Round"
+          HorizontalOptions="Center"
+          VerticalOptions="Center" />
                             </Grid>
 
-                            <Label Grid.Column="2" Text="{Binding DisplayText}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
+                            <Label Grid.Column="2" ToolTipProperties.Text="{Binding FullPath}" Text="{Binding FileName}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
                         </Grid>
                     </DataTemplate>
                 </CollectionView.ItemTemplate>
@@ -71,7 +77,7 @@
                    VerticalTextAlignment="Center" />
         </Grid>
 
-        <Button Grid.Row="5"
+        <Button Grid.Row="6"
                 Text="Normalize"
                 IsEnabled="{Binding IsNotNormalizing}"
                 IsVisible="{Binding HasItems}"

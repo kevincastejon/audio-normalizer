@@ -19,11 +19,19 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             if (_isNormalizing == value) return;
             _isNormalizing = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowSelectedCount));
             OnPropertyChanged(nameof(IsNotNormalizing));
         }
     }
-
+    public bool ShowSelectedCount => HasItems && IsNotNormalizing;
     public bool IsNotNormalizing => !IsNormalizing;
+    public string SelectedFilesText
+    {
+        get
+        {
+            return $"{AudioFiles.Count(x=>x.IsChecked)} file(s) selected";
+        }
+    }
 
     private string _outputPostfix = "_Normalized";
     public string OutputPostfix
@@ -67,13 +75,31 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         CleanupNormalizeTempOnStartup();
 
-        AudioFiles.CollectionChanged += (_, _) =>
-        {
-            OnPropertyChanged(nameof(HasItems));
-            OnPropertyChanged(nameof(ShowNoFilesMessage));
-        };
+        AudioFiles.CollectionChanged += OnAudioFilesCollectionChanged;
+    }
+    void OnAudioFilesCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+            foreach (var obj in e.OldItems)
+                if (obj is AudioItem item)
+                    item.PropertyChanged -= OnAudioItemPropertyChanged;
+
+        if (e.NewItems is not null)
+            foreach (var obj in e.NewItems)
+                if (obj is AudioItem item)
+                    item.PropertyChanged += OnAudioItemPropertyChanged;
+
+        OnPropertyChanged(nameof(SelectedFilesText));
+        OnPropertyChanged(nameof(HasItems));
+        OnPropertyChanged(nameof(ShowSelectedCount));
+        OnPropertyChanged(nameof(ShowNoFilesMessage));
     }
 
+    void OnAudioItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AudioItem.IsChecked))
+            OnPropertyChanged(nameof(SelectedFilesText));
+    }
     public event PropertyChangedEventHandler? PropertyChanged;
 
     void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -428,15 +454,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         public bool IsSucceeded => Status == AudioStatus.Succeeded;
         public bool IsFailed => Status == AudioStatus.Failed;
 
-        public string DisplayText { get; }
-
+        public string FileName { get; }
         public string FullPath => fullPath;
 
         public AudioItem(string path)
         {
             fullPath = path;
             var name = Path.GetFileName(path);
-            DisplayText = $"{name} ({fullPath})";
+            FileName = $"{name}";
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
