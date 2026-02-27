@@ -10,10 +10,18 @@ namespace AudioNormalizer;
 
 public partial class MainPage : ContentPage, INotifyPropertyChanged
 {
+    const double OutputAttenuationMinDb = -24.0;
+    const double OutputAttenuationMaxDb = 0.0;
+    const double OutputAttenuationStepDb = 0.5;
+    const int OutputAttenuationMaxDecimals = 3;
+
+    bool _isUpdatingOutputAttenuationText;
+    string _outputAttenuationText = "0";
     private CancellationTokenSource? _normalizeCts;
     private Process? _currentProcess;
 
     private bool _isNormalizing;
+
     public bool IsNormalizing
     {
         get => _isNormalizing;
@@ -71,6 +79,16 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         ? string.Empty
         : $"No audio file found in directory {PickedDirectory}";
 
+    public string OutputAttenuationText
+    {
+        get => _outputAttenuationText;
+        set
+        {
+            if (_outputAttenuationText == value) return;
+            _outputAttenuationText = value ?? string.Empty;
+            OnPropertyChanged();
+        }
+    }
     public MainPage()
     {
         InitializeComponent();
@@ -129,7 +147,39 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         foreach (var item in AudioFiles)
             item.IsChecked = false;
     }
+    void OnOutputAttenuationMinusClicked(object sender, EventArgs e)
+    {
+        var v = GetOutputAttenuationDb();
+        v = ClampDb(v - OutputAttenuationStepDb);
+        v = SnapToStep(v, OutputAttenuationStepDb);
+        SetOutputAttenuationTextFromValue(v);
+    }
 
+    void OnOutputAttenuationPlusClicked(object sender, EventArgs e)
+    {
+        var v = GetOutputAttenuationDb();
+        v = ClampDb(v + OutputAttenuationStepDb);
+        v = SnapToStep(v, OutputAttenuationStepDb);
+        SetOutputAttenuationTextFromValue(v);
+    }
+
+    void OnOutputAttenuationTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingOutputAttenuationText) return;
+
+        var sanitized = SanitizeDbText(e.NewTextValue);
+        if (sanitized == e.NewTextValue)
+            return;
+
+        _isUpdatingOutputAttenuationText = true;
+        OutputAttenuationText = sanitized;
+        _isUpdatingOutputAttenuationText = false;
+    }
+
+    void OnOutputAttenuationUnfocused(object sender, FocusEventArgs e)
+    {
+        NormalizeOutputAttenuationText();
+    }
     async void OnNormalizeClicked(object sender, EventArgs e)
     {
         if (IsNormalizing) return;
@@ -218,7 +268,9 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                     $":measured_thresh={meas.InputThresh.ToString(CultureInfo.InvariantCulture)}" +
                     $":offset={meas.TargetOffset.ToString(CultureInfo.InvariantCulture)}" +
                     $":linear=true:print_format=summary";
-
+                var attenuationDb = GetOutputAttenuationDb();
+                if (attenuationDb < 0)
+                    filter += $",volume={attenuationDb.ToString(CultureInfo.InvariantCulture)}dB";
                 var arguments =
                     $"-y -i \"{file}\" -map 0:a:0 -vn -map_metadata 0 -af \"{filter}\" {encodingArgs} \"{tempFile}\"";
 
@@ -436,7 +488,138 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         CleanNormalizeTempFiles();
     }
+    static double ClampDb(double v)
+    {
+        if (v < OutputAttenuationMinDb) return OutputAttenuationMinDb;
+        if (v > OutputAttenuationMaxDb) return OutputAttenuationMaxDb;
+        return v;
+    }
 
+    double GetOutputAttenuationDb()
+    {
+        if (!TryParseDbInvariant(OutputAttenuationText, out var v))
+            v = 0;
+
+        v = ClampDb(v);
+        if (v > 0) v = 0;
+        return v;
+    }
+
+    void NormalizeOutputAttenuationText()
+    {
+        if (!TryParseDbInvariant(OutputAttenuationText, out var v))
+        {
+            SetOutputAttenuationTextFromValue(0);
+            return;
+        }
+
+        v = ClampDb(v);
+        if (v > 0) v = 0;
+        SetOutputAttenuationTextFromValue(v);
+    }
+
+    void SetOutputAttenuationTextFromValue(double v)
+    {
+        var s = FormatDbForUi(v);
+        if (OutputAttenuationText == s)
+            return;
+
+        _isUpdatingOutputAttenuationText = true;
+        OutputAttenuationText = s;
+        _isUpdatingOutputAttenuationText = false;
+    }
+
+    static double SnapToStep(double v, double step)
+    {
+        if (step <= 0) return v;
+        return Math.Round(v / step, MidpointRounding.AwayFromZero) * step;
+    }
+
+
+    static string SanitizeDbText(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+
+        var s = input.Trim();
+
+        var sb = new System.Text.StringBuilder(s.Length);
+        var hasMinus = false;
+        var hasSep = false;
+
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+
+            if (c == '-')
+            {
+                if (sb.Length == 0 && !hasMinus)
+                {
+                    sb.Append('-');
+                    hasMinus = true;
+                }
+                continue;
+            }
+
+            if (c == '.' || c == ',')
+            {
+                if (!hasSep)
+                {
+                    sb.Append(c);
+                    hasSep = true;
+                }
+                continue;
+            }
+
+            if (c >= '0' && c <= '9')
+            {
+                sb.Append(c);
+                continue;
+            }
+        }
+
+        var result = sb.ToString();
+
+        if (result.Length > 1 && result[0] == '-' && (result[1] == '.' || result[1] == ','))
+            result = "-0" + result.Substring(1);
+
+        if (result.Length == 1 && (result[0] == '.' || result[0] == ','))
+            result = "0" + result;
+
+        return result;
+    }
+
+    static bool TryParseDbInvariant(string? text, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var s = text.Trim();
+        if (s == "-" || s == "." || s == "," || s == "-." || s == "-,")
+            return false;
+
+        s = s.Replace(',', '.');
+        return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    static string FormatDbForUi(double v)
+    {
+        v = ClampDb(v);
+        var culture = CultureInfo.CurrentCulture;
+
+        var format = "0." + new string('#', OutputAttenuationMaxDecimals);
+        var s = v.ToString(format, culture);
+
+        var sep = culture.NumberFormat.NumberDecimalSeparator;
+        if (s.Contains(sep, StringComparison.Ordinal))
+            s = s.TrimEnd('0').TrimEnd(sep[0]);
+
+        if (s == "-0")
+            s = "0";
+
+        return s;
+    }
     // ----------- ffprobe helpers (minimal changes, only what's needed) -----------
 
     sealed class FfprobeRoot

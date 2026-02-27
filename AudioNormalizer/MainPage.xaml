@@ -5,7 +5,7 @@
              x:Name="HomePage"
              Title="Audio Normalizer">
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
         <Button Grid.Row="0"
                 Text="Select folder"
                 Clicked="OnPickFolderClicked"
@@ -23,17 +23,43 @@
                    MinimumWidthRequest="50"/>
         </Grid>
 
-        <HorizontalStackLayout Grid.Row="2" Spacing="12" IsVisible="{Binding HasItems}">
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <Label Grid.Column="0"
+                   Text="Output attenuation (dB)"
+                   VerticalOptions="Center" />
+
+            <HorizontalStackLayout Grid.Column="1" Spacing="8" VerticalOptions="Center">
+                <Button Text="-"
+                        WidthRequest="40"
+                        Clicked="OnOutputAttenuationMinusClicked"
+                        IsEnabled="{Binding IsNotNormalizing}" />
+                <Entry WidthRequest="90"
+                       HorizontalTextAlignment="Center"
+                       Keyboard="Numeric"
+                       Text="{Binding OutputAttenuationText}"
+                       TextChanged="OnOutputAttenuationTextChanged"
+                       Unfocused="OnOutputAttenuationUnfocused"
+                       IsEnabled="{Binding IsNotNormalizing}" />
+                <Button Text="+"
+                        WidthRequest="40"
+                        Clicked="OnOutputAttenuationPlusClicked"
+                        IsEnabled="{Binding IsNotNormalizing}" />
+            </HorizontalStackLayout>
+        </Grid>
+
+        <HorizontalStackLayout Grid.Row="3" Spacing="12" IsVisible="{Binding HasItems}">
             <Button Text="Select all" Clicked="OnSelectAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
             <Button Text="Clear all" Clicked="OnClearAllClicked" IsEnabled="{Binding IsNotNormalizing}" />
         </HorizontalStackLayout>
 
-        <HorizontalStackLayout Grid.Row="3" Spacing="12" IsVisible="{Binding IsNormalizing}">
+        <HorizontalStackLayout Grid.Row="4" Spacing="12" IsVisible="{Binding IsNormalizing}">
             <Button Text="Cancel" Clicked="OnCancelClicked" />
             <Label Text="Normalizing..." VerticalOptions="Center" />
         </HorizontalStackLayout>
-        <Label Grid.Row="4" Text="{Binding SelectedFilesText}" VerticalOptions="Center" IsVisible="{Binding ShowSelectedCount}"/>
-        <Grid Grid.Row="5">
+
+        <Label Grid.Row="5" Text="{Binding SelectedFilesText}" VerticalOptions="Center" IsVisible="{Binding ShowSelectedCount}"/>
+
+        <Grid Grid.Row="6">
             <CollectionView ItemsSource="{Binding AudioFiles}" IsVisible="{Binding HasItems}">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
@@ -42,27 +68,27 @@
 
                             <Grid Grid.Column="1" WidthRequest="24" HeightRequest="24" VerticalOptions="Center" HorizontalOptions="Center">
                                 <ActivityIndicator IsRunning="{Binding IsProcessing}"
-                       IsVisible="{Binding IsProcessing}"
-                       VerticalOptions="Center"
-                       HorizontalOptions="Center" />
+                                                   IsVisible="{Binding IsProcessing}"
+                                                   VerticalOptions="Center"
+                                                   HorizontalOptions="Center" />
 
                                 <Path IsVisible="{Binding IsSucceeded}"
-          Data="M2,12 L9,19 L22,4"
-          Stroke="Green"
-          StrokeThickness="2.5"
-          StrokeLineCap="Round"
-          StrokeLineJoin="Round"
-          HorizontalOptions="Center"
-          VerticalOptions="Center" />
+                                      Data="M2,12 L9,19 L22,4"
+                                      Stroke="Green"
+                                      StrokeThickness="2.5"
+                                      StrokeLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      HorizontalOptions="Center"
+                                      VerticalOptions="Center" />
 
                                 <Path IsVisible="{Binding IsFailed}"
-          Data="M5,5 L19,19 M19,5 L5,19"
-          Stroke="Red"
-          StrokeThickness="2.5"
-          StrokeLineCap="Round"
-          StrokeLineJoin="Round"
-          HorizontalOptions="Center"
-          VerticalOptions="Center" />
+                                      Data="M5,5 L19,19 M19,5 L5,19"
+                                      Stroke="Red"
+                                      StrokeThickness="2.5"
+                                      StrokeLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      HorizontalOptions="Center"
+                                      VerticalOptions="Center" />
                             </Grid>
 
                             <Label Grid.Column="2" ToolTipProperties.Text="{Binding FullPath}" Text="{Binding FileName}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
@@ -77,7 +103,7 @@
                    VerticalTextAlignment="Center" />
         </Grid>
 
-        <Button Grid.Row="6"
+        <Button Grid.Row="7"
                 Text="Normalize"
                 IsEnabled="{Binding IsNotNormalizing}"
                 IsVisible="{Binding HasItems}"
