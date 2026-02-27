@@ -34,6 +34,9 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     string? _currentPlaybackPath;
     bool _currentPlaybackIsPreview;
 
+    bool _suppressPlaybackErrorDialog;
+    string? _playbackDisplayName;
+
 #if WINDOWS
     readonly MediaPlayer _mediaPlayer;
 #endif
@@ -119,8 +122,8 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
 #if WINDOWS
         _mediaPlayer = new MediaPlayer();
-        _mediaPlayer.MediaEnded += (_, _) => MainThread.BeginInvokeOnMainThread(StopPlayback);
-        _mediaPlayer.MediaFailed += (_, _) => MainThread.BeginInvokeOnMainThread(StopPlayback);
+        _mediaPlayer.MediaEnded += (_, _) => MainThread.BeginInvokeOnMainThread(() => StopPlayback(true));
+        _mediaPlayer.MediaFailed += OnMediaPlayerFailed;
 #endif
     }
 
@@ -261,10 +264,19 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 TryDeleteFile(previewFile);
             return;
         }
-        catch
+        catch (Exception ex)
         {
             if (!string.IsNullOrWhiteSpace(previewFile))
                 TryDeleteFile(previewFile);
+
+            try
+            {
+                await DisplayAlertAsync("Preview", $"Preview generation failed for:\n{item.FileName}\n\n{ex.Message}", "OK");
+            }
+            catch
+            {
+            }
+
             return;
         }
         finally
@@ -285,7 +297,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     void CancelPreviewGenerationAndPlayback()
     {
-        StopPlayback();
+        StopPlayback(true);
 
         _previewCts?.Cancel();
 
@@ -308,8 +320,10 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         _previewCts = null;
     }
 
-    void StopPlayback()
+    void StopPlayback(bool suppressPlaybackErrorDialog)
     {
+        _suppressPlaybackErrorDialog = suppressPlaybackErrorDialog;
+
 #if WINDOWS
         try
         {
@@ -333,11 +347,47 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         _currentPlaybackPath = null;
         _currentPlaybackIsPreview = false;
+        _playbackDisplayName = null;
     }
+
+    void StopPlayback()
+    {
+        StopPlayback(true);
+    }
+
+#if WINDOWS
+    async void OnMediaPlayerFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
+    {
+        var displayName = _playbackDisplayName;
+        var isPreview = _currentPlaybackIsPreview;
+        var show = !_suppressPlaybackErrorDialog && !string.IsNullOrWhiteSpace(displayName);
+
+        StopPlayback(true);
+
+        if (!show)
+            return;
+
+        var title = isPreview ? "Preview" : "Play";
+        var message = isPreview
+            ? $"Unable to play preview for:\n{displayName}"
+            : $"Unable to play file:\n{displayName}";
+
+        try
+        {
+            await MainThread.InvokeOnMainThreadAsync(() => DisplayAlertAsync(title, message, "OK"));
+        }
+        catch
+        {
+        }
+    }
+#endif
 
     void StartPlayback(AudioItem item, string path, bool isPreview)
     {
-        StopPlayback();
+        StopPlayback(true);
+
+        _suppressPlaybackErrorDialog = false;
+        _playbackDisplayName = item.FileName;
 
         _playbackItem = item;
         _currentPlaybackPath = path;
@@ -353,9 +403,22 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             _mediaPlayer.Source = MediaSource.CreateFromUri(uri);
             _mediaPlayer.Play();
         }
-        catch
+        catch (Exception ex)
         {
-            StopPlayback();
+            var displayName = item.FileName;
+            var title = isPreview ? "Preview" : "Play";
+            StopPlayback(true);
+
+            MainThread.BeginInvokeOnMainThread(async () =>
+            {
+                try
+                {
+                    await DisplayAlertAsync(title, $"Unable to play {(isPreview ? "preview" : "file")}:\n{displayName}\n\n{ex.Message}", "OK");
+                }
+                catch
+                {
+                }
+            });
         }
 #endif
     }
@@ -606,8 +669,12 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         if (process.ExitCode != 0)
         {
+            var error = string.Empty;
+            try { error = (await process.StandardError.ReadToEndAsync()).Trim(); } catch { }
             TryDeleteFile(previewFile);
-            throw new Exception("ffmpeg preview failed.");
+            if (string.IsNullOrWhiteSpace(error))
+                error = $"Exit code: {process.ExitCode}";
+            throw new Exception(error);
         }
 
         return previewFile;
