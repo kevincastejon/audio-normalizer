@@ -64,7 +64,10 @@
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Padding="6" ColumnSpacing="10">
-                            <CheckBox IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}" Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
+                            <CheckBox IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}"
+                                      Grid.Column="0"
+                                      IsChecked="{Binding IsChecked}"
+                                      VerticalOptions="Center" />
 
                             <Grid Grid.Column="1" WidthRequest="24" HeightRequest="24" VerticalOptions="Center" HorizontalOptions="Center">
                                 <ActivityIndicator IsRunning="{Binding IsProcessing}"
@@ -91,31 +94,51 @@
                                       VerticalOptions="Center" />
                             </Grid>
 
-                            <Label Grid.Column="2" ToolTipProperties.Text="{Binding FullPath}" Text="{Binding FileName}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
+                            <Label Grid.Column="2"
+                                   ToolTipProperties.Text="{Binding FullPath}"
+                                   Text="{Binding FileName}"
+                                   LineBreakMode="CharacterWrap"
+                                   VerticalOptions="Center" />
 
                             <Border Grid.Column="3"
-                                    WidthRequest="34"
-                                    HeightRequest="34"
+                                    WidthRequest="40"
+                                    HeightRequest="40"
                                     StrokeThickness="1"
-                                    StrokeShape="RoundRectangle 8"
+                                    Stroke="#4A4A4A"
+                                    Background="#2A2A2A"
+                                    StrokeShape="RoundRectangle 12"
                                     Padding="0"
                                     IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}">
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Tapped="OnPlaySourceTapped" />
                                 </Border.GestureRecognizers>
-                                <Grid>
-                                    <Path Data="M10,7 L26,17 L10,27 Z"
-                                          Fill="Black"
-                                          HorizontalOptions="Center"
-                                          VerticalOptions="Center" />
+
+                                <Grid WidthRequest="20" HeightRequest="20"
+                                      HorizontalOptions="Center"
+                                      VerticalOptions="Center">
+                                    <Path IsVisible="{Binding IsNotPlayingSource}"
+                                          Data="M8,5 L19,12 L8,19 Z"
+                                          Fill="White"
+                                          Aspect="Uniform"
+                                          HorizontalOptions="Fill"
+                                          VerticalOptions="Fill" />
+
+                                    <Path IsVisible="{Binding IsPlayingSource}"
+                                          Data="M8,8 H16 V16 H8 Z"
+                                          Fill="White"
+                                          Aspect="Uniform"
+                                          HorizontalOptions="Fill"
+                                          VerticalOptions="Fill" />
                                 </Grid>
                             </Border>
 
                             <Border Grid.Column="4"
-                                    WidthRequest="34"
-                                    HeightRequest="34"
+                                    WidthRequest="40"
+                                    HeightRequest="40"
                                     StrokeThickness="1"
-                                    StrokeShape="RoundRectangle 8"
+                                    Stroke="#4A4A4A"
+                                    Background="#2A2A2A"
+                                    StrokeShape="RoundRectangle 12"
                                     Padding="0"
                                     IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}"
                                     InputTransparent="{Binding IsPreviewGenerating}"
@@ -123,20 +146,31 @@
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Tapped="OnPreviewTapped" />
                                 </Border.GestureRecognizers>
-                                <Grid>
+
+                                <Grid WidthRequest="20" HeightRequest="20"
+                                      HorizontalOptions="Center"
+                                      VerticalOptions="Center">
                                     <ActivityIndicator IsRunning="{Binding IsPreviewGenerating}"
                                                        IsVisible="{Binding IsPreviewGenerating}"
                                                        HorizontalOptions="Center"
                                                        VerticalOptions="Center" />
 
-                                    <Path IsVisible="{Binding IsPreviewNotGenerating}"
-                                          Data="M2,17 C6,7 28,7 32,17 C28,27 6,27 2,17 Z M17,12 A5,5 0 1 0 17,22 A5,5 0 1 0 17,12 Z"
-                                          Stroke="Black"
+                                    <Path IsVisible="{Binding IsPreviewEyeVisible}"
+                                          Data="M2,12 C5,6 19,6 22,12 C19,18 5,18 2,12 Z M12,9 A3,3 0 1 0 12,15 A3,3 0 1 0 12,9 Z"
+                                          Stroke="White"
                                           StrokeThickness="1.8"
                                           StrokeLineCap="Round"
                                           StrokeLineJoin="Round"
-                                          HorizontalOptions="Center"
-                                          VerticalOptions="Center" />
+                                          Aspect="Uniform"
+                                          HorizontalOptions="Fill"
+                                          VerticalOptions="Fill" />
+
+                                    <Path IsVisible="{Binding IsPreviewStopVisible}"
+                                          Data="M8,8 H16 V16 H8 Z"
+                                          Fill="White"
+                                          Aspect="Uniform"
+                                          HorizontalOptions="Fill"
+                                          VerticalOptions="Fill" />
                                 </Grid>
                             </Border>
                         </Grid>

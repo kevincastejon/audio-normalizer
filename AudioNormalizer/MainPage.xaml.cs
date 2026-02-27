@@ -30,6 +30,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     Process? _previewProcess;
     AudioItem? _previewItem;
 
+    AudioItem? _playbackItem;
     string? _currentPlaybackPath;
     bool _currentPlaybackIsPreview;
 
@@ -214,8 +215,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (sender is not BindableObject bo) return;
         if (bo.BindingContext is not AudioItem item) return;
 
+        if (_playbackItem == item && !_currentPlaybackIsPreview)
+        {
+            CancelPreviewGenerationAndPlayback();
+            return;
+        }
+
         CancelPreviewGenerationAndPlayback();
-        StartPlayback(item.FullPath, false);
+        StartPlayback(item, item.FullPath, false);
     }
 
     async void OnPreviewTapped(object sender, TappedEventArgs e)
@@ -223,6 +230,12 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (IsNormalizing) return;
         if (sender is not BindableObject bo) return;
         if (bo.BindingContext is not AudioItem item) return;
+
+        if (_playbackItem == item && _currentPlaybackIsPreview && !item.IsPreviewGenerating)
+        {
+            CancelPreviewGenerationAndPlayback();
+            return;
+        }
 
         CancelPreviewGenerationAndPlayback();
 
@@ -267,7 +280,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         }
 
         if (!string.IsNullOrWhiteSpace(previewFile) && File.Exists(previewFile))
-            StartPlayback(previewFile, true);
+            StartPlayback(item, previewFile, true);
     }
 
     void CancelPreviewGenerationAndPlayback()
@@ -308,6 +321,13 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         }
 #endif
 
+        if (_playbackItem is not null)
+        {
+            _playbackItem.IsPlayingSource = false;
+            _playbackItem.IsPlayingPreview = false;
+            _playbackItem = null;
+        }
+
         if (_currentPlaybackIsPreview && !string.IsNullOrWhiteSpace(_currentPlaybackPath))
             TryDeleteFile(_currentPlaybackPath);
 
@@ -315,12 +335,16 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         _currentPlaybackIsPreview = false;
     }
 
-    void StartPlayback(string path, bool isPreview)
+    void StartPlayback(AudioItem item, string path, bool isPreview)
     {
         StopPlayback();
 
+        _playbackItem = item;
         _currentPlaybackPath = path;
         _currentPlaybackIsPreview = isPreview;
+
+        item.IsPlayingSource = !isPreview;
+        item.IsPlayingPreview = isPreview;
 
 #if WINDOWS
         try
@@ -1168,12 +1192,44 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 if (isPreviewGenerating == value) return;
                 isPreviewGenerating = value;
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(IsPreviewNotGenerating));
                 OnPropertyChanged(nameof(PreviewButtonOpacity));
+                OnPropertyChanged(nameof(IsPreviewEyeVisible));
+                OnPropertyChanged(nameof(IsPreviewStopVisible));
             }
         }
 
-        public bool IsPreviewNotGenerating => !IsPreviewGenerating;
+        bool isPlayingSource;
+        public bool IsPlayingSource
+        {
+            get => isPlayingSource;
+            set
+            {
+                if (isPlayingSource == value) return;
+                isPlayingSource = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsNotPlayingSource));
+            }
+        }
+
+        bool isPlayingPreview;
+        public bool IsPlayingPreview
+        {
+            get => isPlayingPreview;
+            set
+            {
+                if (isPlayingPreview == value) return;
+                isPlayingPreview = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsPreviewEyeVisible));
+                OnPropertyChanged(nameof(IsPreviewStopVisible));
+            }
+        }
+
+        public bool IsNotPlayingSource => !IsPlayingSource;
+
+        public bool IsPreviewEyeVisible => !IsPreviewGenerating && !IsPlayingPreview;
+
+        public bool IsPreviewStopVisible => !IsPreviewGenerating && IsPlayingPreview;
 
         public double PreviewButtonOpacity => IsPreviewGenerating ? 0.5 : 1.0;
 
@@ -1188,8 +1244,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         public AudioItem(string path)
         {
             fullPath = path;
-            var name = Path.GetFileName(path);
-            FileName = $"{name}";
+            FileName = Path.GetFileName(path);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
