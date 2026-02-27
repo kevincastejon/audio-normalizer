@@ -64,10 +64,7 @@
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Padding="6" ColumnSpacing="10">
-                            <CheckBox IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}"
-                                      Grid.Column="0"
-                                      IsChecked="{Binding IsChecked}"
-                                      VerticalOptions="Center" />
+                            <CheckBox IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}" Grid.Column="0" IsChecked="{Binding IsChecked}" VerticalOptions="Center" />
 
                             <Grid Grid.Column="1" WidthRequest="24" HeightRequest="24" VerticalOptions="Center" HorizontalOptions="Center">
                                 <ActivityIndicator IsRunning="{Binding IsProcessing}"
@@ -94,50 +91,31 @@
                                       VerticalOptions="Center" />
                             </Grid>
 
-                            <Label Grid.Column="2"
-                                   ToolTipProperties.Text="{Binding FullPath}"
-                                   Text="{Binding FileName}"
-                                   LineBreakMode="CharacterWrap"
-                                   VerticalOptions="Center" />
+                            <Label Grid.Column="2" ToolTipProperties.Text="{Binding FullPath}" Text="{Binding FileName}" LineBreakMode="CharacterWrap" VerticalOptions="Center" />
 
                             <Border Grid.Column="3"
-                                    WidthRequest="38"
-                                    HeightRequest="38"
+                                    WidthRequest="34"
+                                    HeightRequest="34"
                                     StrokeThickness="1"
-                                    Stroke="#4A4A4A"
-                                    Background="#2A2A2A"
-                                    StrokeShape="RoundRectangle 10"
+                                    StrokeShape="RoundRectangle 8"
                                     Padding="0"
                                     IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}">
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Tapped="OnPlaySourceTapped" />
                                 </Border.GestureRecognizers>
                                 <Grid>
-                                    <Path IsVisible="{Binding IsNotPlayingSource}"
-                                          Data="M13,10 L27,19 L13,28 Z"
-                                          Fill="White"
+                                    <Path Data="M10,7 L26,17 L10,27 Z"
+                                          Fill="Black"
                                           HorizontalOptions="Center"
-                                          VerticalOptions="Center"
-                                          WidthRequest="16"
-                                          HeightRequest="16" />
-
-                                    <Path IsVisible="{Binding IsPlayingSource}"
-                                          Data="M13,13 H25 V25 H13 Z"
-                                          Fill="White"
-                                          HorizontalOptions="Center"
-                                          VerticalOptions="Center"
-                                          WidthRequest="16"
-                                          HeightRequest="16" />
+                                          VerticalOptions="Center" />
                                 </Grid>
                             </Border>
 
                             <Border Grid.Column="4"
-                                    WidthRequest="38"
-                                    HeightRequest="38"
+                                    WidthRequest="34"
+                                    HeightRequest="34"
                                     StrokeThickness="1"
-                                    Stroke="#4A4A4A"
-                                    Background="#2A2A2A"
-                                    StrokeShape="RoundRectangle 10"
+                                    StrokeShape="RoundRectangle 8"
                                     Padding="0"
                                     IsVisible="{Binding BindingContext.IsNotNormalizing, Source={x:Reference HomePage}}"
                                     InputTransparent="{Binding IsPreviewGenerating}"
@@ -151,24 +129,14 @@
                                                        HorizontalOptions="Center"
                                                        VerticalOptions="Center" />
 
-                                    <Path IsVisible="{Binding IsPreviewEyeVisible}"
+                                    <Path IsVisible="{Binding IsPreviewNotGenerating}"
                                           Data="M2,17 C6,7 28,7 32,17 C28,27 6,27 2,17 Z M17,12 A5,5 0 1 0 17,22 A5,5 0 1 0 17,12 Z"
-                                          Stroke="White"
+                                          Stroke="Black"
                                           StrokeThickness="1.8"
                                           StrokeLineCap="Round"
                                           StrokeLineJoin="Round"
                                           HorizontalOptions="Center"
-                                          VerticalOptions="Center"
-                                          WidthRequest="20"
-                                          HeightRequest="20" />
-
-                                    <Path IsVisible="{Binding IsPreviewStopVisible}"
-                                          Data="M13,13 H25 V25 H13 Z"
-                                          Fill="White"
-                                          HorizontalOptions="Center"
-                                          VerticalOptions="Center"
-                                          WidthRequest="16"
-                                          HeightRequest="16" />
+                                          VerticalOptions="Center" />
                                 </Grid>
                             </Border>
                         </Grid>
