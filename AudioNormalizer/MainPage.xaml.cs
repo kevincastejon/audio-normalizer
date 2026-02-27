@@ -6,6 +6,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+#if WINDOWS
+using Windows.Media.Core;
+using Windows.Media.Playback;
+#endif
+
 namespace AudioNormalizer;
 
 public partial class MainPage : ContentPage, INotifyPropertyChanged
@@ -17,10 +22,22 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     bool _isUpdatingOutputAttenuationText;
     string _outputAttenuationText = "0";
-    private CancellationTokenSource? _normalizeCts;
-    private Process? _currentProcess;
 
-    private bool _isNormalizing;
+    CancellationTokenSource? _normalizeCts;
+    Process? _currentProcess;
+
+    CancellationTokenSource? _previewCts;
+    Process? _previewProcess;
+    AudioItem? _previewItem;
+
+    string? _currentPlaybackPath;
+    bool _currentPlaybackIsPreview;
+
+#if WINDOWS
+    readonly MediaPlayer _mediaPlayer;
+#endif
+
+    bool _isNormalizing;
 
     public bool IsNormalizing
     {
@@ -34,17 +51,15 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsNotNormalizing));
         }
     }
-    public bool ShowSelectedCount => HasItems && IsNotNormalizing;
-    public bool IsNotNormalizing => !IsNormalizing;
-    public string SelectedFilesText
-    {
-        get
-        {
-            return $"{AudioFiles.Count(x => x.IsChecked)} file(s) selected";
-        }
-    }
 
-    private string _outputPostfix = "_Normalized";
+    public bool ShowSelectedCount => HasItems && IsNotNormalizing;
+
+    public bool IsNotNormalizing => !IsNormalizing;
+
+    public string SelectedFilesText => $"{AudioFiles.Count(x => x.IsChecked)} file(s) selected";
+
+    string _outputPostfix = "_Normalized";
+
     public string OutputPostfix
     {
         get => _outputPostfix;
@@ -59,6 +74,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     public ObservableCollection<AudioItem> AudioFiles { get; } = new();
 
     string? pickedDirectory;
+
     public string? PickedDirectory
     {
         get => pickedDirectory;
@@ -89,15 +105,24 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
+
     public MainPage()
     {
         InitializeComponent();
         BindingContext = this;
 
         CleanupNormalizeTempOnStartup();
+        CleanupPreviewTempOnStartup();
 
         AudioFiles.CollectionChanged += OnAudioFilesCollectionChanged;
+
+#if WINDOWS
+        _mediaPlayer = new MediaPlayer();
+        _mediaPlayer.MediaEnded += (_, _) => MainThread.BeginInvokeOnMainThread(StopPlayback);
+        _mediaPlayer.MediaFailed += (_, _) => MainThread.BeginInvokeOnMainThread(StopPlayback);
+#endif
     }
+
     void OnAudioFilesCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         if (e.OldItems is not null)
@@ -121,6 +146,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (e.PropertyName == nameof(AudioItem.IsChecked))
             OnPropertyChanged(nameof(SelectedFilesText));
     }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -147,6 +173,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         foreach (var item in AudioFiles)
             item.IsChecked = false;
     }
+
     void OnOutputAttenuationMinusClicked(object sender, EventArgs e)
     {
         var v = GetOutputAttenuationDb();
@@ -180,9 +207,140 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     {
         NormalizeOutputAttenuationText();
     }
+
+    void OnPlaySourceTapped(object sender, TappedEventArgs e)
+    {
+        if (IsNormalizing) return;
+        if (sender is not BindableObject bo) return;
+        if (bo.BindingContext is not AudioItem item) return;
+
+        CancelPreviewGenerationAndPlayback();
+        StartPlayback(item.FullPath, false);
+    }
+
+    async void OnPreviewTapped(object sender, TappedEventArgs e)
+    {
+        if (IsNormalizing) return;
+        if (sender is not BindableObject bo) return;
+        if (bo.BindingContext is not AudioItem item) return;
+
+        CancelPreviewGenerationAndPlayback();
+
+        var ffmpegPath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
+        var ffprobePath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffprobe.exe");
+
+        if (!File.Exists(ffmpegPath) || !File.Exists(ffprobePath))
+            return;
+
+        item.IsPreviewGenerating = true;
+        _previewItem = item;
+        _previewCts = new CancellationTokenSource();
+
+        string? previewFile = null;
+
+        try
+        {
+            previewFile = await GeneratePreviewFileAsync(ffmpegPath, ffprobePath, item.FullPath, _previewCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!string.IsNullOrWhiteSpace(previewFile))
+                TryDeleteFile(previewFile);
+            return;
+        }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(previewFile))
+                TryDeleteFile(previewFile);
+            return;
+        }
+        finally
+        {
+            if (_previewItem is not null)
+                _previewItem.IsPreviewGenerating = false;
+
+            _previewItem = null;
+
+            _previewProcess = null;
+            _previewCts?.Dispose();
+            _previewCts = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(previewFile) && File.Exists(previewFile))
+            StartPlayback(previewFile, true);
+    }
+
+    void CancelPreviewGenerationAndPlayback()
+    {
+        StopPlayback();
+
+        _previewCts?.Cancel();
+
+        try
+        {
+            if (_previewProcess is { HasExited: false })
+                _previewProcess.Kill(true);
+        }
+        catch
+        {
+        }
+
+        if (_previewItem is not null)
+            _previewItem.IsPreviewGenerating = false;
+
+        _previewItem = null;
+
+        _previewProcess = null;
+        _previewCts?.Dispose();
+        _previewCts = null;
+    }
+
+    void StopPlayback()
+    {
+#if WINDOWS
+        try
+        {
+            _mediaPlayer.Pause();
+            _mediaPlayer.Source = null;
+        }
+        catch
+        {
+        }
+#endif
+
+        if (_currentPlaybackIsPreview && !string.IsNullOrWhiteSpace(_currentPlaybackPath))
+            TryDeleteFile(_currentPlaybackPath);
+
+        _currentPlaybackPath = null;
+        _currentPlaybackIsPreview = false;
+    }
+
+    void StartPlayback(string path, bool isPreview)
+    {
+        StopPlayback();
+
+        _currentPlaybackPath = path;
+        _currentPlaybackIsPreview = isPreview;
+
+#if WINDOWS
+        try
+        {
+            var uri = new Uri(path);
+            _mediaPlayer.Source = MediaSource.CreateFromUri(uri);
+            _mediaPlayer.Play();
+        }
+        catch
+        {
+            StopPlayback();
+        }
+#endif
+    }
+
     async void OnNormalizeClicked(object sender, EventArgs e)
     {
         if (IsNormalizing) return;
+
+        CancelPreviewGenerationAndPlayback();
 
         var ffmpegPath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
         var ffprobePath = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffprobe.exe");
@@ -252,71 +410,11 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
                 var tempFile = Path.Combine(tempRoot, $"{Guid.NewGuid()}{ext}");
 
-                // Preserve encoding parameters as much as possible using ffprobe.
-                var encodingArgs = await BuildEncodingArgsFromFfprobeAsync(ffprobePath, file, ext, _normalizeCts.Token);
-
-                // 2-pass loudnorm:
-                // Pass 1: analyze to get measured values (JSON in stderr)
-                var meas = await GetLoudnormMeasurementsAsync(ffmpegPath, file, _normalizeCts.Token);
-
-                // Pass 2: apply normalization using measured values
-                var filter =
-                    $"loudnorm=I=-16:TP=-1.5:LRA=11" +
-                    $":measured_I={meas.InputI.ToString(CultureInfo.InvariantCulture)}" +
-                    $":measured_TP={meas.InputTP.ToString(CultureInfo.InvariantCulture)}" +
-                    $":measured_LRA={meas.InputLRA.ToString(CultureInfo.InvariantCulture)}" +
-                    $":measured_thresh={meas.InputThresh.ToString(CultureInfo.InvariantCulture)}" +
-                    $":offset={meas.TargetOffset.ToString(CultureInfo.InvariantCulture)}" +
-                    $":linear=true:print_format=summary";
-                var attenuationDb = GetOutputAttenuationDb();
-                if (attenuationDb < 0)
-                    filter += $",volume={attenuationDb.ToString(CultureInfo.InvariantCulture)}dB";
-                var arguments =
-                    $"-y -i \"{file}\" -map 0:a:0 -vn -map_metadata 0 -af \"{filter}\" {encodingArgs} \"{tempFile}\"";
-
-                var psi = new ProcessStartInfo
+                var (ok, errorText) = await ProcessSingleFileToOutputAsync(ffmpegPath, ffprobePath, file, tempFile, _normalizeCts.Token);
+                if (!ok)
                 {
-                    FileName = ffmpegPath,
-                    Arguments = arguments,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-
-                using var process = new Process { StartInfo = psi };
-                _currentProcess = process;
-
-                process.Start();
-
-                try
-                {
-                    await process.WaitForExitAsync(_normalizeCts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    try
-                    {
-                        if (!process.HasExited)
-                            process.Kill(true);
-                    }
-                    catch
-                    {
-                    }
-
                     TryDeleteFile(tempFile);
-                    item.Status = AudioStatus.None;
-                    throw;
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    var error = (await process.StandardError.ReadToEndAsync()).Trim();
-                    if (string.IsNullOrWhiteSpace(error))
-                        error = $"Exit code: {process.ExitCode}";
-
-                    TryDeleteFile(tempFile);
-                    errors.Add((file, error));
+                    errors.Add((file, errorText));
                     item.Status = AudioStatus.Failed;
                     continue;
                 }
@@ -354,6 +452,141 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             IsNormalizing = false;
             CleanNormalizeTempFiles();
         }
+    }
+
+    async Task<(bool ok, string errorText)> ProcessSingleFileToOutputAsync(string ffmpegPath, string ffprobePath, string inputFile, string outputFile, CancellationToken token)
+    {
+        var ext = Path.GetExtension(inputFile);
+        var encodingArgs = await BuildEncodingArgsFromFfprobeAsync(ffprobePath, inputFile, ext, token);
+        var meas = await GetLoudnormMeasurementsAsync(ffmpegPath, inputFile, token);
+
+        var filter =
+            $"loudnorm=I=-16:TP=-1.5:LRA=11" +
+            $":measured_I={meas.InputI.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_TP={meas.InputTP.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_LRA={meas.InputLRA.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_thresh={meas.InputThresh.ToString(CultureInfo.InvariantCulture)}" +
+            $":offset={meas.TargetOffset.ToString(CultureInfo.InvariantCulture)}" +
+            $":linear=true:print_format=summary";
+
+        var attenuationDb = GetOutputAttenuationDb();
+        if (attenuationDb < 0)
+            filter += $",volume={attenuationDb.ToString(CultureInfo.InvariantCulture)}dB";
+
+        var arguments =
+            $"-y -i \"{inputFile}\" -map 0:a:0 -vn -map_metadata 0 -af \"{filter}\" {encodingArgs} \"{outputFile}\"";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        _currentProcess = process;
+
+        process.Start();
+
+        try
+        {
+            await process.WaitForExitAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(true);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+
+        if (process.ExitCode != 0)
+        {
+            var error = (await process.StandardError.ReadToEndAsync()).Trim();
+            if (string.IsNullOrWhiteSpace(error))
+                error = $"Exit code: {process.ExitCode}";
+
+            return (false, error);
+        }
+
+        return (true, string.Empty);
+    }
+
+    async Task<string> GeneratePreviewFileAsync(string ffmpegPath, string ffprobePath, string inputFile, CancellationToken token)
+    {
+        var ext = Path.GetExtension(inputFile);
+        var previewRoot = GetPreviewTempRoot();
+        var previewFile = Path.Combine(previewRoot, $"{Guid.NewGuid()}{ext}");
+
+        var encodingArgs = await BuildEncodingArgsFromFfprobeAsync(ffprobePath, inputFile, ext, token);
+        var meas = await GetLoudnormMeasurementsAsync(ffmpegPath, inputFile, token);
+
+        var filter =
+            $"loudnorm=I=-16:TP=-1.5:LRA=11" +
+            $":measured_I={meas.InputI.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_TP={meas.InputTP.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_LRA={meas.InputLRA.ToString(CultureInfo.InvariantCulture)}" +
+            $":measured_thresh={meas.InputThresh.ToString(CultureInfo.InvariantCulture)}" +
+            $":offset={meas.TargetOffset.ToString(CultureInfo.InvariantCulture)}" +
+            $":linear=true:print_format=summary";
+
+        var attenuationDb = GetOutputAttenuationDb();
+        if (attenuationDb < 0)
+            filter += $",volume={attenuationDb.ToString(CultureInfo.InvariantCulture)}dB";
+
+        var arguments =
+            $"-y -i \"{inputFile}\" -map 0:a:0 -vn -map_metadata 0 -af \"{filter}\" {encodingArgs} \"{previewFile}\"";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        _previewProcess = process;
+
+        process.Start();
+
+        try
+        {
+            await process.WaitForExitAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(true);
+            }
+            catch
+            {
+            }
+
+            TryDeleteFile(previewFile);
+            throw;
+        }
+
+        if (process.ExitCode != 0)
+        {
+            TryDeleteFile(previewFile);
+            throw new Exception("ffmpeg preview failed.");
+        }
+
+        return previewFile;
     }
 
     void LoadAudioFiles(string rootDirectory)
@@ -458,6 +691,13 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         return tempRoot;
     }
 
+    static string GetPreviewTempRoot()
+    {
+        var tempRoot = Path.Combine(FileSystem.CacheDirectory, "PreviewTempFiles");
+        Directory.CreateDirectory(tempRoot);
+        return tempRoot;
+    }
+
     static void TryDeleteFile(string path)
     {
         try
@@ -484,10 +724,30 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         }
     }
 
+    static void CleanPreviewTempFiles()
+    {
+        var tempRoot = GetPreviewTempRoot();
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(tempRoot))
+                TryDeleteFile(file);
+        }
+        catch
+        {
+        }
+    }
+
     void CleanupNormalizeTempOnStartup()
     {
         CleanNormalizeTempFiles();
     }
+
+    void CleanupPreviewTempOnStartup()
+    {
+        CleanPreviewTempFiles();
+    }
+
     static double ClampDb(double v)
     {
         if (v < OutputAttenuationMinDb) return OutputAttenuationMinDb;
@@ -534,7 +794,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (step <= 0) return v;
         return Math.Round(v / step, MidpointRounding.AwayFromZero) * step;
     }
-
 
     static string SanitizeDbText(string? input)
     {
@@ -620,7 +879,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         return s;
     }
-    // ----------- ffprobe helpers (minimal changes, only what's needed) -----------
 
     sealed class FfprobeRoot
     {
@@ -682,7 +940,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         var args =
             $"-v error -select_streams a:0 -show_entries stream=codec_type,codec_name,bit_rate,sample_rate,channels,channel_layout,sample_fmt,profile -show_entries format=bit_rate,format_name -of json \"{inputFile}\"";
 
-        var (exitCode, stdout, stderr) = await RunProcessCaptureAsync(ffprobePath, args, token);
+        var (exitCode, stdout, _) = await RunProcessCaptureAsync(ffprobePath, args, token);
 
         if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout))
             return string.Empty;
@@ -746,7 +1004,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         return string.Join(' ', parts);
     }
 
-    // NOTE: This does NOT set _currentProcess, to avoid interfering with Cancel() killing ffmpeg.
     async Task<(int exitCode, string stdout, string stderr)> RunProcessCaptureAsync(string exePath, string arguments, CancellationToken token)
     {
         var psi = new ProcessStartInfo
@@ -788,8 +1045,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         return (process.ExitCode, stdout, stderr);
     }
-
-    // ----------- loudnorm 2-pass helpers -----------
 
     sealed class LoudnormMeasurements
     {
@@ -864,8 +1119,6 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         };
     }
 
-    // ---------------------------------------------
-
     public enum AudioStatus
     {
         None = 0,
@@ -905,6 +1158,24 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
                 OnPropertyChanged(nameof(IsFailed));
             }
         }
+
+        bool isPreviewGenerating;
+        public bool IsPreviewGenerating
+        {
+            get => isPreviewGenerating;
+            set
+            {
+                if (isPreviewGenerating == value) return;
+                isPreviewGenerating = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsPreviewNotGenerating));
+                OnPropertyChanged(nameof(PreviewButtonOpacity));
+            }
+        }
+
+        public bool IsPreviewNotGenerating => !IsPreviewGenerating;
+
+        public double PreviewButtonOpacity => IsPreviewGenerating ? 0.5 : 1.0;
 
         public bool ShowStatus => Status != AudioStatus.None;
         public bool IsProcessing => Status == AudioStatus.Processing;
